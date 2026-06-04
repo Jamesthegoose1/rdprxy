@@ -2,6 +2,12 @@ export default {
   async fetch(request, env) {
     const type = request.headers.get("Type");
     const targetUrl = request.headers.get("url");
+    const key = request.headers.get("proxy-access-key");
+
+    // 🔐 Auth check
+    if (!key || key !== env.ACCESS_KEY) {
+      return new Response("Invalid access key", { status: 403 });
+    }
 
     if (!type || !targetUrl) {
       return new Response("Missing Type or url header", { status: 400 });
@@ -16,10 +22,11 @@ export default {
 
     const method = type.toLowerCase();
 
-    // 🔵 GET request
-    if (method === "GET") {
+    // 🌐 GET request
+    if (method === "get") {
       const res = await fetch(url.toString(), {
-        method: "GET"
+        method: "GET",
+        headers: request.headers
       });
 
       return new Response(await res.text(), {
@@ -28,8 +35,8 @@ export default {
       });
     }
 
-    // 🟢 POST request (uses content.key)
-    if (method === "POST") {
+    // 📦 POST request
+    if (method === "post") {
       const content = request.headers.get("content.key");
 
       const res = await fetch(url.toString(), {
@@ -37,7 +44,7 @@ export default {
         headers: {
           "Content-Type": "application/json"
         },
-        body: content ?? ""
+        body: content || ""
       });
 
       return new Response(await res.text(), {
