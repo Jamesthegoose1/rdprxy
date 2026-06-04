@@ -1,135 +1,51 @@
-const proxy = require('http-proxy');
-const https = require('https');
-const http = require('http');
-const { URL } = require('url');
+export default {
+  async fetch(request, env) {
+    const type = request.headers.get("Type");
+    const targetUrl = request.headers.get("url");
 
-if (!process.env.ACCESS_KEY || !process.env.ALLOWED_HOSTS) {
-  throw new Error('Configuration error! Make sure ACCESS_KEY and ALLOWED_HOSTS are both defined in your process environment.');
-}
+    if (!type || !targetUrl) {
+      return new Response("Missing Type or url header", { status: 400 });
+    }
 
-const getHosts = (hosts) => {
-  let parsed = [];
-  hosts = hosts.split(',');
-  for (let i = 0; i < hosts.length; i++) {
-    const iHost = hosts[i];
-    const split = iHost.split(':');
-    if (split.length !== 2) {
-      throw new Error(`Configuration error! Invalid protocol:host pair on item ${iHost}`);
-    }
-    const proto = split[0];
-    if (proto !== 'http' && proto !== 'https') {
-      throw new Error(`Configuration error! Invalid protocol ${proto}. Only these protocols are allowed: http, https`);
-    }
-    const host = split[1];
+    let url;
     try {
-      (() => new URL(`${proto}://${host}`))();
-    } catch (e) {
-      throw new Error(`Configuration error! Invalid host domain on item ${iHost}`);
+      url = new URL(targetUrl);
+    } catch {
+      return new Response("Invalid URL", { status: 400 });
     }
-    parsed.push({
-      proto: proto,
-      host: host
-    });
-  }
-  return parsed;
-};
 
-const PORT = process.env.PORT || 80;
-const ACCESS_KEY = process.env.ACCESS_KEY;
-const ALLOWED_HOSTS = getHosts(process.env.ALLOWED_HOSTS);
+    const method = type.toLowerCase();
 
-const server = http.createServer();
+    // 🔵 GET request
+    if (method === "GET") {
+      const res = await fetch(url.toString(), {
+        method: "GET"
+      });
 
-const httpsProxy = proxy.createProxyServer({
-  agent: new https.Agent({
-    checkServerIdentity: (host, cert) => {
-      return undefined;
+      return new Response(await res.text(), {
+        status: res.status,
+        headers: res.headers
+      });
     }
-  }),
-  changeOrigin: true
-});
 
-const httpProxy = proxy.createProxyServer({
-  changeOrigin: true
-});
+    // 🟢 POST request (uses content.key)
+    if (method === "POST") {
+      const content = request.headers.get("content.key");
 
-const onProxyError = (err, req, res) => {
-  console.error(err);
+      const res = await fetch(url.toString(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: content ?? ""
+      });
 
-  res.writeHead(500, {'Content-Type': 'text/plain'});
-
-  res.end('Proxying failed.');
-};
-
-const onProxyReq = (proxyReq, req, res, options) => {
-  proxyReq.setHeader('User-Agent', 'Mozilla');
-  proxyReq.removeHeader('roblox-id');
-  proxyReq.removeHeader('proxy-access-key');
-  proxyReq.removeHeader('proxy-target');
-};
-
-httpsProxy.on('error', onProxyError);
-httpsProxy.on('proxyReq', onProxyReq);
-httpProxy.on('error', onProxyError);
-httpProxy.on('proxyReq', onProxyReq);
-
-const doProxy = (target, proto, req, res) => {
-  var options = {
-    target: proto + '://' + target.host
-  };
-  if (proto === 'https') {
-    httpsProxy.web(req, res, options);
-  } else if (proto === 'http') {
-    httpProxy.web(req, res, options);
-  } else {
-    throw new Error(`Do proxy error: Invalid protocol ${proto}`);
-  }
-};
-
-server.on('request', (req, res) => {
-  if (req.headers['proxy-access-key'] && req.headers['proxy-target']) {
-    req.on('error', (err) => {
-      console.error(`Request error: ${err}`);
-    });
-    if (req.headers['proxy-access-key'] === ACCESS_KEY) {
-      const requestedTarget = req.headers['proxy-target'];
-      if (requestedTarget) {
-        let parsedTarget;
-        try {
-          parsedTarget = new URL(`https://${requestedTarget}`);
-        } catch (e) {
-          res.writeHead(400, {'Content-Type': 'text/plain'});
-          res.end('Invalid target');
-          return;
-        }
-        const requestedHost = parsedTarget.host;
-        for (let i = 0; i < ALLOWED_HOSTS.length; i++) {
-          const iHost = ALLOWED_HOSTS[i];
-          if (requestedHost === iHost.host) {
-            doProxy(parsedTarget, iHost.proto, req, res);
-            return;
-          }
-        }
-        res.writeHead(400, {'Content-Type': 'text/plain'});
-        res.end('Host not whitelisted');
-      } else {
-        res.writeHead(400, {'Content-Type': 'text/plain'});
-        res.end('Target is required');
-      }
-    } else {
-      res.writeHead(403, {'Content-Type': 'text/plain'});
-      res.end('Invalid access key');
+      return new Response(await res.text(), {
+        status: res.status,
+        headers: res.headers
+      });
     }
-  } else {
-    res.writeHead(400, {'Content-Type': 'text/plain'});
-    res.end('proxy-access-key and proxy-target headers are both required');
-  }
-});
 
-server.listen(PORT, (err) => {
-  if (err) {
-    console.error(`Server listening error: ${err}`);
-    return;
+    return new Response("Type must be GET or POST", { status: 400 });
   }
-  console.log(`Server started on port ${PORT}`);
-});
+};
